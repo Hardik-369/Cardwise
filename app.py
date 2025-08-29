@@ -364,7 +364,7 @@ class CardWiseApp:
             "messages": [
                 {
                     "role": "system",
-                    "content": "You are a financial advisor specializing in credit card recommendations. Always respond with valid JSON only. No markdown formatting, no extra text outside the JSON structure."
+                    "content": "You are a financial advisor specializing in credit card recommendations. Analyze real-time market data and provide personalized recommendations based on current credit card offers."
                 },
                 {
                     "role": "user",
@@ -372,7 +372,7 @@ class CardWiseApp:
                 }
             ],
             "max_tokens": 2000,
-            "temperature": 0.3  # Lower temperature for more consistent JSON formatting
+            "temperature": 0.7
         }
         
         try:
@@ -387,11 +387,6 @@ class CardWiseApp:
                 result = response.json()
                 ai_response = result['choices'][0]['message']['content']
                 st.success("✅ AI recommendations generated successfully")
-                
-                # Add debug info for troubleshooting in deployed version
-                if 'debug' in st.query_params:
-                    st.text_area("AI Response (Debug)", ai_response, height=200)
-                
                 return self._parse_ai_response(ai_response)
             else:
                 st.error(f"⚠️ API request failed with status {response.status_code}: {response.text}")
@@ -429,18 +424,16 @@ class CardWiseApp:
         4. Consider their spending pattern: {user_profile.spending_categories}
         5. Use only current market data to ensure recommendations reflect today's offers
 
-        CRITICAL: You MUST respond with VALID JSON only. No markdown, no extra text, just clean JSON.
-        
-        Respond with exactly this JSON structure (ensure all quotes are properly escaped and no trailing commas):
+        Please provide your response in the following JSON format:
         {{
             "primary_recommendation": {{
                 "card_name": "Exact card name from market data",
                 "issuer": "Card issuer",
                 "key_benefits": ["benefit1", "benefit2", "benefit3"],
-                "annual_fee": "Specific fee amount or No annual fee",
+                "annual_fee": "Specific fee amount or 'No annual fee'",
                 "reward_rate": "Detailed reward structure for their spending",
                 "why_recommended": "Specific explanation based on their ${user_profile.monthly_spending:,} monthly spending and {user_profile.credit_score_range} credit score",
-                "current_signup_bonus": "Current signup bonus if available or Check current offers"
+                "current_signup_bonus": "Current signup bonus if available"
             }},
             "action_plan": [
                 "Specific step 1 based on current offers",
@@ -450,7 +443,7 @@ class CardWiseApp:
             ],
             "optimization_tips": [
                 "Tip 1 for their spending categories",
-                "Tip 2 for maximizing rewards on ${user_profile.monthly_spending:,} per month",
+                "Tip 2 for maximizing rewards on ${user_profile.monthly_spending:,}/month",
                 "Tip 3 for their credit score range"
             ],
             "estimated_annual_value": "Calculated based on ${user_profile.monthly_spending:,} monthly spending",
@@ -464,164 +457,35 @@ class CardWiseApp:
         """
     
     def _parse_ai_response(self, ai_response: str) -> Dict:
-        """Parse AI response and extract structured data with enhanced error handling."""
+        """Parse AI response and extract structured data."""
         try:
-            # Clean up the response first
-            cleaned_response = ai_response.strip()
-            
-            # Find JSON in the response - look for { and }
-            json_start = cleaned_response.find('{')
-            json_end = cleaned_response.rfind('}') + 1
+            # Find JSON in the response
+            json_start = ai_response.find('{')
+            json_end = ai_response.rfind('}') + 1
             
             if json_start != -1 and json_end != -1:
-                json_str = cleaned_response[json_start:json_end]
+                json_str = ai_response[json_start:json_end]
+                parsed_data = json.loads(json_str)
                 
-                # Clean up common JSON formatting issues
-                json_str = self._clean_json_string(json_str)
+                # Validate required fields
+                required_fields = ['primary_recommendation', 'action_plan', 'optimization_tips']
+                for field in required_fields:
+                    if field not in parsed_data:
+                        st.error(f"⚠️ Invalid AI response: missing {field}")
+                        st.stop()
                 
-                try:
-                    parsed_data = json.loads(json_str)
-                    
-                    # Validate required fields
-                    required_fields = ['primary_recommendation', 'action_plan', 'optimization_tips']
-                    for field in required_fields:
-                        if field not in parsed_data:
-                            # Create fallback structure if field is missing
-                            parsed_data = self._create_fallback_structure(ai_response)
-                            break
-                    
-                    return parsed_data
-                    
-                except json.JSONDecodeError as e:
-                    st.warning(f"JSON parsing failed: {str(e)}")
-                    # Try to extract key information manually
-                    return self._extract_info_manually(ai_response)
+                return parsed_data
             else:
-                st.warning("No valid JSON structure found in AI response")
-                return self._extract_info_manually(ai_response)
+                st.error("⚠️ AI response format error: No valid JSON found")
+                st.stop()
                 
+        except json.JSONDecodeError as e:
+            st.error(f"⚠️ AI response parsing error: {str(e)}")
+            st.error("Unable to process AI recommendations.")
+            st.stop()
         except Exception as e:
-            st.warning(f"Response parsing error: {str(e)}")
-            return self._extract_info_manually(ai_response)
-    
-    def _clean_json_string(self, json_str: str) -> str:
-        """Clean common JSON formatting issues."""
-        # Remove any markdown code blocks
-        json_str = json_str.replace('```json', '').replace('```', '')
-        
-        # Fix common issues with quotes
-        json_str = json_str.replace('""', '"')
-        json_str = json_str.replace('""', '"')
-        
-        # Fix trailing commas
-        import re
-        json_str = re.sub(r',\s*}', '}', json_str)
-        json_str = re.sub(r',\s*]', ']', json_str)
-        
-        # Fix missing commas between elements
-        json_str = re.sub(r'}\s*{', '},{', json_str)
-        json_str = re.sub(r']\s*\[', '],[', json_str)
-        
-        return json_str
-    
-    def _create_fallback_structure(self, ai_response: str) -> Dict:
-        """Create fallback structure when JSON parsing fails."""
-        # Extract card name if possible
-        card_name = "AI-Recommended Credit Card"
-        lines = ai_response.split('\n')
-        for line in lines:
-            if 'card' in line.lower() and ('chase' in line.lower() or 'citi' in line.lower() or 
-                                          'capital' in line.lower() or 'american express' in line.lower() or
-                                          'discover' in line.lower() or 'bank' in line.lower()):
-                card_name = line.strip()[:50]
-                break
-        
-        return {
-            "primary_recommendation": {
-                "card_name": card_name,
-                "issuer": "Major Credit Card Issuer",
-                "key_benefits": [
-                    "Competitive rewards program",
-                    "No foreign transaction fees",
-                    "Sign-up bonus available"
-                ],
-                "annual_fee": "Varies",
-                "reward_rate": "Competitive rates for your spending",
-                "why_recommended": ai_response[:300] + "..." if len(ai_response) > 300 else ai_response,
-                "current_signup_bonus": "Check current offers"
-            },
-            "action_plan": [
-                "Research the recommended credit card options",
-                "Compare current market offers and terms",
-                "Check your credit score and eligibility",
-                "Apply for the most suitable card for your profile"
-            ],
-            "optimization_tips": [
-                "Pay your balance in full each month to avoid interest",
-                "Use the card for categories with highest rewards",
-                "Set up automatic payments to never miss a payment"
-            ],
-            "estimated_annual_value": "Varies based on spending patterns",
-            "alternative_options": [
-                {
-                    "card_name": "Alternative Option",
-                    "reason": "Consider as backup choice"
-                }
-            ]
-        }
-    
-    def _extract_info_manually(self, ai_response: str) -> Dict:
-        """Extract information manually when JSON parsing completely fails."""
-        st.info("Using manual extraction due to AI response format issues")
-        
-        # Try to extract key information using text processing
-        lines = ai_response.split('\n')
-        card_name = "AI-Recommended Credit Card"
-        benefits = []
-        tips = []
-        
-        for line in lines:
-            line = line.strip()
-            if not line:
-                continue
-                
-            # Look for card names
-            if any(bank in line.lower() for bank in ['chase', 'citi', 'capital one', 'american express', 'discover']):
-                card_name = line[:50]
-            
-            # Look for benefits
-            if line.startswith('•') or line.startswith('-') or 'benefit' in line.lower():
-                benefits.append(line.replace('•', '').replace('-', '').strip())
-            
-            # Look for tips
-            if 'tip' in line.lower() or 'recommend' in line.lower():
-                tips.append(line.strip())
-        
-        # Ensure we have some content
-        if not benefits:
-            benefits = ["Competitive rewards program", "No annual fee options available", "Good for your credit profile"]
-        
-        if not tips:
-            tips = ["Pay balance in full monthly", "Use for bonus categories", "Monitor your credit score"]
-        
-        return {
-            "primary_recommendation": {
-                "card_name": card_name,
-                "issuer": "Credit Card Provider",
-                "key_benefits": benefits[:3],
-                "annual_fee": "Check current terms",
-                "reward_rate": "Competitive for your profile",
-                "why_recommended": ai_response[:200] + "..." if len(ai_response) > 200 else ai_response
-            },
-            "action_plan": [
-                "Review the AI analysis and recommendations",
-                "Research current credit card offers in the market",
-                "Compare terms and benefits for your needs",
-                "Apply for the most suitable option"
-            ],
-            "optimization_tips": tips[:3],
-            "estimated_annual_value": "Depends on your spending patterns"
-        }
+            st.error(f"⚠️ Unexpected parsing error: {str(e)}")
+            st.stop()
 
 
     
