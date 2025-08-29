@@ -1,0 +1,5 @@
+streamlit>=1.28.0
+requests>=2.31.0
+googlesearch-python>=1.2.3
+reportlab>=4.0.4
+typing-extensions>=4.7.0
